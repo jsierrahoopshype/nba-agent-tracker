@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NBA Agent Tracker | HoopsHype</title>
+  <meta name="description" content="Track NBA player-agent relationships and earnings since 1990. Explore agent rankings, client earnings, and player career salaries.">
+  <meta property="og:title" content="NBA Agent Tracker | HoopsHype">
+  <meta property="og:description" content="Track NBA player-agent relationships and earnings since 1990.">
+  <meta property="og:type" content="website">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    #root { min-height: 100vh; }
+    .loading { display: flex; align-items: center; justify-content: center; height: 100vh; background: #f8fafc; }
+    .loading-text { font-size: 18px; color: #64748b; }
+    @media (max-width: 768px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+      .grid-two { grid-template-columns: 1fr !important; }
+      .grid-auto { grid-template-columns: 1fr !important; }
+      .hero-title { font-size: 28px !important; }
+      .hero-badge { margin-left: 0 !important; margin-top: 12px !important; display: block !important; width: fit-content !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"><div class="loading"><span class="loading-text">Loading agent data...</span></div></div>
+  
+  <script type="text/babel" data-type="module">
+    const { useState, useMemo, useCallback, useEffect } = React;
+
+    function AgentTracker({ playerSalaries, agentData }) {
+      const [searchMode, setSearchMode] = useState('agent');
+      const [searchTerm, setSearchTerm] = useState('');
+      const [selectedItem, setSelectedItem] = useState(null);
+      const [selectedSeason, setSelectedSeason] = useState(null);
+      const [showAllSuggestions, setShowAllSuggestions] = useState(false);
+
+      const formatMoney = (amt) => '$' + Math.round(amt).toLocaleString();
+      const formatMoneyShort = (amt) => {
+        if (amt >= 1e9) return '$' + (amt / 1e9).toFixed(2) + 'B';
+        if (amt >= 1e6) return '$' + (amt / 1e6).toFixed(1) + 'M';
+        return '$' + Math.round(amt).toLocaleString();
+      };
+
+      const agents = useMemo(() => [...new Set(agentData.map(d => d.agent))].sort(), [agentData]);
+      const players = useMemo(() => [...new Set(agentData.map(d => d.player))].sort(), [agentData]);
+      
+      const playerCareerEarnings = useMemo(() => {
+        const map = {};
+        for (const [player, seasons] of Object.entries(playerSalaries)) {
+          map[player] = Object.values(seasons).reduce((a, b) => a + b, 0);
+        }
+        return map;
+      }, [playerSalaries]);
+
+      const playerRecordsMap = useMemo(() => {
+        const map = {};
+        for (const [player, seasons] of Object.entries(playerSalaries)) {
+          const records = Object.entries(seasons).map(([season, salary]) => ({ season, salary }));
+          map[player] = records.sort((a, b) => {
+            const aYear = parseInt(a.season.split('-')[0]);
+            const bYear = parseInt(b.season.split('-')[0]);
+            return aYear - bYear;
+          });
+        }
+        return map;
+      }, [playerSalaries]);
+
+      const futureSeasons = useMemo(() => new Set(['2025-26']), []);
+      
+      const playersWithTeam = useMemo(() => {
+        const set = new Set();
+        for (const record of agentData) {
+          if (record.team && record.current === 'Yes') {
+            set.add(record.player);
+          }
+        }
+        return set;
+      }, [agentData]);
+
+      const seasonToYear = (season) => parseInt(season.split('-')[0]);
+      const isCurrentClient = (record) => record.current === 'Yes';
+      
+      const parseDate = (dateStr) => {
+        if (!dateStr) return null;
+        const d = new Date(dateStr);
+        return isNaN(d.getTime()) ? null : d;
+      };
+
+      const getSeasonDates = (season) => {
+        const startYear = parseInt(season.split('-')[0]);
+        return { start: new Date(startYear, 6, 1), end: new Date(startYear + 1, 5, 30) };
+      };
+
+      const isAgentActiveInSeason = (season, agentStart, agentEnd, isCurrent) => {
+        const seasonDates = getSeasonDates(season);
+        const startDate = parseDate(agentStart);
+        const endDate = parseDate(agentEnd);
+        if (startDate && startDate > seasonDates.end) return false;
+        if (!isCurrent && endDate && endDate < seasonDates.start) return false;
+        return true;
+      };
+
+      const getEarningsWithAgent = (player, agent, agentStart, agentEnd, currentFlag, playerRecords) => {
+        const isCurrent = currentFlag === 'Yes';
+        const isFutureSeason = (season) => futureSeasons.has(season);
+        const hasTeam = playersWithTeam.has(player);
+        
+        let total = 0;
+        const seasons = [];
+        let firstSeason = null, lastSeason = null;
+        
+        for (const record of playerRecords) {
+          if (isFutureSeason(record.season) && !hasTeam) continue;
+          if (isAgentActiveInSeason(record.season, agentStart, agentEnd, isCurrent)) {
+            total += record.salary;
+            seasons.push({ season: record.season, salary: record.salary });
+            if (!firstSeason) firstSeason = record.season;
+            lastSeason = record.season;
+          }
+        }
+        return { total, seasons, seasonCount: seasons.length, firstSeason, lastSeason };
+      };
+
+      const agentPlayersMap = useMemo(() => {
+        const map = {};
+        for (const d of agentData) {
+          if (!map[d.agent]) map[d.agent] = new Set();
+          map[d.agent].add(d.player);
+        }
+        return map;
+      }, [agentData]);
+
+      const playerAgentsMap = useMemo(() => {
+        const map = {};
+        for (const d of agentData) {
+          if (!map[d.player]) map[d.player] = new Set();
+          map[d.player].add(d.agent);
+        }
+        return map;
+      }, [agentData]);
+
+      const playerTeamMap = useMemo(() => {
+        const map = {};
+        for (const record of agentData) {
+          if (record.team && isCurrentClient(record)) map[record.player] = record.team;
+        }
+        return map;
+      }, [agentData]);
+
+      const allPlayersRanked = useMemo(() => 
+        Object.entries(playerCareerEarnings).sort((a, b) => b[1] - a[1]).map(([player], idx) => ({ player, rank: idx + 1 })), 
+      [playerCareerEarnings]);
+      
+      const playerRankMap = useMemo(() => {
+        const map = {};
+        allPlayersRanked.forEach(({ player, rank }) => { map[player] = rank; });
+        return map;
+      }, [allPlayersRanked]);
+
+      const agentStats = useMemo(() => {
+        const stats = {};
+        const processedPairs = new Set();
+        for (const record of agentData) {
+          const pairKey = `${record.agent}|${record.player}`;
+          if (processedPairs.has(pairKey)) continue;
+          processedPairs.add(pairKey);
+          if (!stats[record.agent]) stats[record.agent] = { agent: record.agent, currentClients: [], totalEarnings: 0, firstYear: null };
+          const playerRecords = playerRecordsMap[record.player] || [];
+          const earnings = getEarningsWithAgent(record.player, record.agent, record.start, record.end, record.current, playerRecords);
+          stats[record.agent].totalEarnings += earnings.total;
+          if (earnings.firstSeason) {
+            const year = seasonToYear(earnings.firstSeason);
+            if (!stats[record.agent].firstYear || year < stats[record.agent].firstYear) stats[record.agent].firstYear = year;
+          }
+          if (isCurrentClient(record) && earnings.total > 0) stats[record.agent].currentClients.push({ player: record.player, earnings: earnings.total });
+        }
+        return stats;
+      }, [agentData, playerRecordsMap]);
+
+      const agentLeaderboard = useMemo(() => 
+        Object.values(agentStats).filter(a => a.totalEarnings > 0).sort((a, b) => b.totalEarnings - a.totalEarnings).map((agent, idx) => ({ ...agent, rank: idx + 1 })), 
+      [agentStats]);
+      
+      const agentRankMap = useMemo(() => {
+        const map = {};
+        agentLeaderboard.forEach(({ agent, rank }) => { map[agent] = rank; });
+        return map;
+      }, [agentLeaderboard]);
+      
+      const playerLeaderboard = useMemo(() => {
+        const playersInData = new Set(agentData.map(d => d.player));
+        return Object.entries(playerCareerEarnings)
+          .filter(([player]) => playersInData.has(player))
+          .sort((a, b) => b[1] - a[1])
+          .map(([player, earnings]) => ({ player, earnings, rank: playerRankMap[player] || 0 }));
+      }, [agentData, playerCareerEarnings, playerRankMap]);
+
+      const seasonRankings = useMemo(() => {
+        if (!selectedSeason) return { players: [], agents: [] };
+        const isFutureSeason = futureSeasons.has(selectedSeason);
+        const playerSeasonEarnings = [];
+        for (const [player, seasons] of Object.entries(playerSalaries)) {
+          if (isFutureSeason && !playersWithTeam.has(player)) continue;
+          if (seasons[selectedSeason]) playerSeasonEarnings.push({ player, salary: seasons[selectedSeason] });
+        }
+        playerSeasonEarnings.sort((a, b) => b.salary - a.salary);
+        const agentSeasonEarnings = {};
+        const processedPairs = new Set();
+        for (const record of agentData) {
+          const pairKey = `${record.agent}|${record.player}`;
+          if (processedPairs.has(pairKey)) continue;
+          processedPairs.add(pairKey);
+          const playerRecords = playerRecordsMap[record.player] || [];
+          const earnings = getEarningsWithAgent(record.player, record.agent, record.start, record.end, record.current, playerRecords);
+          const seasonEarning = earnings.seasons.find(s => s.season === selectedSeason);
+          if (seasonEarning) {
+            if (!agentSeasonEarnings[record.agent]) agentSeasonEarnings[record.agent] = { agent: record.agent, total: 0, clients: [] };
+            agentSeasonEarnings[record.agent].total += seasonEarning.salary;
+            agentSeasonEarnings[record.agent].clients.push({ player: record.player, salary: seasonEarning.salary });
+          }
+        }
+        const agentRanked = Object.values(agentSeasonEarnings).sort((a, b) => b.total - a.total).map((a, idx) => ({ ...a, rank: idx + 1 }));
+        return { 
+          players: playerSeasonEarnings.slice(0, 25).map((p, i) => ({ ...p, rank: i + 1 })), 
+          agents: agentRanked.slice(0, 25) 
+        };
+      }, [selectedSeason, agentData, playerSalaries, playerRecordsMap, playersWithTeam, futureSeasons]);
+
+      const suggestions = useMemo(() => {
+        const list = searchMode === 'agent' ? agents : players;
+        if (!searchTerm) return showAllSuggestions ? list : list.slice(0, 15);
+        const filtered = list.filter(item => item.toLowerCase().includes(searchTerm.toLowerCase()));
+        return showAllSuggestions ? filtered : filtered.slice(0, 15);
+      }, [searchMode, searchTerm, agents, players, showAllSuggestions]);
+
+      const totalMatches = useMemo(() => {
+        const list = searchMode === 'agent' ? agents : players;
+        if (!searchTerm) return list.length;
+        return list.filter(item => item.toLowerCase().includes(searchTerm.toLowerCase())).length;
+      }, [searchMode, searchTerm, agents, players]);
+
+      const results = useMemo(() => {
+        if (!selectedItem) return [];
+        if (searchMode === 'agent') {
+          const playerSet = new Set();
+          const uniqueRecords = [];
+          for (const d of agentData.filter(d => d.agent === selectedItem)) {
+            if (!playerSet.has(d.player)) { playerSet.add(d.player); uniqueRecords.push(d); }
+          }
+          return uniqueRecords.map(d => {
+            const playerRecords = playerRecordsMap[d.player] || [];
+            const earnings = getEarningsWithAgent(d.player, d.agent, d.start, d.end, d.current, playerRecords);
+            const isTrulyCurrent = isCurrentClient(d);
+            return { ...d, current: isTrulyCurrent, earnings: earnings.total, earningSeasons: earnings.seasons, seasonCount: earnings.seasonCount, firstSeason: earnings.firstSeason, lastSeason: earnings.lastSeason, hasNBAEarnings: earnings.total > 0 };
+          }).filter(d => d.hasNBAEarnings).sort((a, b) => { if (a.current !== b.current) return a.current ? -1 : 1; return b.earnings - a.earnings; });
+        } else {
+          const agentSet = new Set();
+          const uniqueRecords = [];
+          for (const d of agentData.filter(d => d.player === selectedItem)) {
+            if (!agentSet.has(d.agent)) { agentSet.add(d.agent); uniqueRecords.push(d); }
+          }
+          const playerRecords = playerRecordsMap[selectedItem] || [];
+          return uniqueRecords.map(d => {
+            const earnings = getEarningsWithAgent(d.player, d.agent, d.start, d.end, d.current, playerRecords);
+            const isTrulyCurrent = isCurrentClient(d);
+            return { ...d, current: isTrulyCurrent, earnings: earnings.total, earningSeasons: earnings.seasons, seasonCount: earnings.seasonCount, firstSeason: earnings.firstSeason, lastSeason: earnings.lastSeason, hasNBAEarnings: earnings.total > 0, agentRank: agentRankMap[d.agent] || null };
+          }).filter(d => d.hasNBAEarnings).sort((a, b) => b.earnings - a.earnings);
+        }
+      }, [selectedItem, searchMode, agentData, agentRankMap, playerRecordsMap]);
+
+      const relatedSuggestions = useMemo(() => {
+        if (!selectedItem) return [];
+        if (searchMode === 'agent') {
+          const thisAgentPlayers = agentPlayersMap[selectedItem] || new Set();
+          const sharedClientAgents = new Map();
+          for (const player of thisAgentPlayers) {
+            const playerAgents = playerAgentsMap[player] || new Set();
+            for (const agent of playerAgents) {
+              if (agent !== selectedItem) sharedClientAgents.set(agent, (sharedClientAgents.get(agent) || 0) + 1);
+            }
+          }
+          const agentsByShared = [...sharedClientAgents.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4)
+            .map(([agent, count]) => ({ name: agent, reason: `${count} shared`, rank: agentRankMap[agent] }));
+          const thisRank = agentRankMap[selectedItem] || 0;
+          const similarRanked = agentLeaderboard
+            .filter(a => a.agent !== selectedItem && Math.abs(a.rank - thisRank) <= 5 && Math.abs(a.rank - thisRank) > 0)
+            .slice(0, 4)
+            .map(a => ({ name: a.agent, reason: `Rank #${a.rank}`, rank: a.rank }));
+          return [...agentsByShared, ...similarRanked].slice(0, 6);
+        } else {
+          const thisPlayerTeam = playerTeamMap[selectedItem];
+          const thisPlayerAgents = playerAgentsMap[selectedItem] || new Set();
+          const teammates = [];
+          if (thisPlayerTeam) {
+            for (const [player, team] of Object.entries(playerTeamMap)) {
+              if (team === thisPlayerTeam && player !== selectedItem) {
+                teammates.push({ name: player, reason: thisPlayerTeam.split(' ').pop(), rank: playerRankMap[player] });
+              }
+            }
+          }
+          const sameAgentPlayers = [];
+          for (const agent of thisPlayerAgents) {
+            const agentPlayers = agentPlayersMap[agent] || new Set();
+            for (const player of agentPlayers) {
+              if (player !== selectedItem && !sameAgentPlayers.find(p => p.name === player) && !teammates.find(p => p.name === player)) {
+                sameAgentPlayers.push({ name: player, reason: `Same agent`, rank: playerRankMap[player] });
+              }
+            }
+          }
+          sameAgentPlayers.sort((a, b) => (a.rank || 9999) - (b.rank || 9999));
+          const thisEarnings = playerCareerEarnings[selectedItem] || 0;
+          const similarEarnings = playerLeaderboard
+            .filter(p => p.player !== selectedItem && !teammates.find(t => t.name === p.player) && !sameAgentPlayers.find(s => s.name === p.player) && Math.abs(p.earnings - thisEarnings) / thisEarnings < 0.25)
+            .slice(0, 3)
+            .map(p => ({ name: p.player, reason: `Similar earnings`, rank: p.rank }));
+          return [...teammates.slice(0, 3), ...sameAgentPlayers.slice(0, 3), ...similarEarnings].slice(0, 6);
+        }
+      }, [selectedItem, searchMode, agentPlayersMap, playerAgentsMap, playerTeamMap, agentRankMap, playerRankMap, agentLeaderboard, playerLeaderboard, playerCareerEarnings]);
+
+      const currentClients = results.filter(r => r.current);
+      const formerClients = results.filter(r => !r.current);
+      const totalSelectedEarnings = useMemo(() => 
+        searchMode === 'agent' ? results.reduce((sum, r) => sum + r.earnings, 0) : playerCareerEarnings[selectedItem] || 0, 
+      [results, selectedItem, searchMode, playerCareerEarnings]);
+      const selectedAgentRank = searchMode === 'agent' && selectedItem ? agentRankMap[selectedItem] : null;
+      const selectedPlayerRank = searchMode === 'player' && selectedItem ? playerRankMap[selectedItem] : null;
+
+      const handleSelect = useCallback((item, mode) => {
+        if (mode && mode !== searchMode) setSearchMode(mode);
+        setSelectedItem(item);
+        setSearchTerm(item);
+        setSelectedSeason(null);
+        setShowAllSuggestions(false);
+      }, [searchMode]);
+      
+      const handleSeasonClick = (season) => {
+        setSelectedSeason(season);
+        setSelectedItem(null);
+        setSearchTerm('');
+      };
+      
+      const handleReset = () => {
+        setSelectedItem(null);
+        setSearchTerm('');
+        setSelectedSeason(null);
+        setShowAllSuggestions(false);
+      };
+
+      const showAgentLeaderboard = searchMode === 'agent';
+      const totalAgents = agents.length;
+      const totalPlayers = players.length;
+      const totalEarningsTracked = useMemo(() => Object.values(agentStats).reduce((sum, a) => sum + a.totalEarnings, 0), [agentStats]);
+      const activeRelationships = useMemo(() => agentData.filter(d => isCurrentClient(d)).length, [agentData]);
+
+      const styles = {
+        page: { minHeight: '100vh', background: '#f8fafc', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", color: '#1e293b', lineHeight: 1.5 },
+        container: { maxWidth: 1140, margin: '0 auto', padding: '0 24px' },
+        header: { background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', padding: '32px 0', borderBottom: '4px solid #f97316' },
+        headerInner: { maxWidth: 1140, margin: '0 auto', padding: '0 24px' },
+        logo: { fontSize: 26, fontWeight: 800, color: '#fff', margin: 0, cursor: 'pointer', letterSpacing: '-0.03em', display: 'flex', alignItems: 'center', gap: 10 },
+        logoAccent: { color: '#f97316' },
+        tagline: { fontSize: 14, color: '#94a3b8', marginTop: 6, fontWeight: 400 },
+        main: { padding: '40px 0' },
+        statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, marginBottom: 40 },
+        statCard: { background: '#fff', borderRadius: 16, padding: '28px 24px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)' },
+        statValue: { fontSize: 32, fontWeight: 700, color: '#0f172a', letterSpacing: '-0.03em' },
+        statLabel: { fontSize: 11, color: '#64748b', marginTop: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' },
+        searchCard: { background: '#fff', borderRadius: 16, padding: 28, marginBottom: 40, boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)' },
+        searchRow: { display: 'flex', gap: 12, marginBottom: 20 },
+        searchInput: { flex: 1, padding: '16px 20px', fontSize: 16, fontWeight: 500, border: '2px solid #e2e8f0', borderRadius: 12, outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s', background: '#fff' },
+        clearBtn: { padding: '16px 28px', background: '#0f172a', color: '#fff', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600, transition: 'background 0.2s' },
+        modeRow: { display: 'flex', gap: 8 },
+        modeBtn: (active) => ({ padding: '12px 24px', border: 'none', background: active ? '#0f172a' : '#f1f5f9', color: active ? '#fff' : '#475569', borderRadius: 10, cursor: 'pointer', fontSize: 14, fontWeight: 600, transition: 'all 0.2s' }),
+        suggestionPill: { padding: '10px 18px', background: '#f1f5f9', border: 'none', borderRadius: 24, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: '#334155', transition: 'all 0.2s' },
+        heroCard: { background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', borderRadius: 16, padding: '36px 40px', marginBottom: 36, color: '#fff' },
+        heroTitle: { fontSize: 36, fontWeight: 700, margin: 0, letterSpacing: '-0.03em' },
+        heroSub: { fontSize: 16, color: '#94a3b8', marginTop: 10 },
+        heroBadge: { display: 'inline-block', background: '#f97316', color: '#fff', padding: '8px 16px', borderRadius: 24, fontSize: 14, fontWeight: 700, marginLeft: 16, verticalAlign: 'middle' },
+        sectionTitle: { fontSize: 12, fontWeight: 700, color: '#64748b', marginBottom: 20, textTransform: 'uppercase', letterSpacing: '0.1em', display: 'flex', alignItems: 'center', gap: 10 },
+        dot: (color) => ({ width: 8, height: 8, borderRadius: '50%', background: color }),
+        card: { background: '#fff', borderRadius: 14, boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)', transition: 'transform 0.2s, box-shadow 0.2s' },
+        listItem: { padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 20, cursor: 'pointer', borderBottom: '1px solid #f1f5f9' },
+        rankBadge: (rank) => {
+          const colors = { 1: ['#fbbf24', '#78350f'], 2: ['#cbd5e1', '#334155'], 3: ['#fb923c', '#7c2d12'] };
+          const [bg, fg] = colors[rank] || ['#f1f5f9', '#64748b'];
+          return { width: 36, height: 36, borderRadius: '50%', background: bg, color: fg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14, flexShrink: 0 };
+        },
+        earningsBadge: { background: '#0f172a', color: '#fff', padding: '10px 20px', borderRadius: 24, fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em' },
+        clientCard: (isCurrent) => ({ background: '#fff', borderRadius: 14, boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)', padding: 28, borderLeft: `4px solid ${isCurrent ? '#10b981' : '#cbd5e1'}`, marginBottom: 16 }),
+        clientName: { fontSize: 20, fontWeight: 600, color: '#f97316', cursor: 'pointer', transition: 'color 0.15s' },
+        clientTeam: { fontSize: 14, color: '#64748b', marginTop: 4 },
+        clientEarnings: (isCurrent) => ({ fontSize: 32, fontWeight: 700, color: isCurrent ? '#10b981' : '#64748b', letterSpacing: '-0.03em', margin: '16px 0' }),
+        clientMeta: { fontSize: 13, color: '#94a3b8', marginBottom: 20 },
+        seasonTag: { display: 'inline-block', background: '#f1f5f9', padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 500, color: '#475569', cursor: 'pointer', transition: 'all 0.15s', marginRight: 8, marginBottom: 8 },
+        relatedCard: { background: '#fff', borderRadius: 14, boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)', padding: 28 },
+        relatedBtn: { padding: '14px 20px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s', marginRight: 12, marginBottom: 12 },
+        footer: { textAlign: 'center', padding: '48px 24px 32px', color: '#94a3b8', fontSize: 14 },
+        footerBrand: { fontWeight: 700, fontSize: 16, color: '#f97316', marginTop: 8 },
+        gridTwo: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 },
+        gridAuto: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: 20 }
+      };
+
+      const ClickableName = ({ name, type }) => (
+        <span onClick={(e) => { e.stopPropagation(); handleSelect(name, type); }} style={styles.clientName}
+          onMouseEnter={(e) => e.target.style.color = '#ea580c'}
+          onMouseLeave={(e) => e.target.style.color = '#f97316'}>{name}</span>
+      );
+
+      const ClickableSeason = ({ season, salary }) => (
+        <span onClick={(e) => { e.stopPropagation(); handleSeasonClick(season); }} style={styles.seasonTag}
+          onMouseEnter={(e) => { e.target.style.background = '#f97316'; e.target.style.color = '#fff'; }}
+          onMouseLeave={(e) => { e.target.style.background = '#f1f5f9'; e.target.style.color = '#475569'; }}>
+          {season}: {formatMoney(salary)}
+        </span>
+      );
+
+      return (
+        <div style={styles.page}>
+          <header style={styles.header}>
+            <div style={styles.headerInner}>
+              <h1 style={styles.logo} onClick={handleReset}>
+                <span style={styles.logoAccent}>NBA</span> Agent Tracker
+              </h1>
+              <p style={styles.tagline}>Player-agent relationships & earnings since 1990</p>
+            </div>
+          </header>
+
+          <main style={styles.main}>
+            <div style={styles.container}>
+              
+              {/* Stats */}
+              <div style={styles.statsGrid} className="stats-grid">
+                {[{ v: totalAgents, l: 'Agents' }, { v: totalPlayers.toLocaleString(), l: 'Players' }, { v: formatMoneyShort(totalEarningsTracked), l: 'Total Tracked' }, { v: activeRelationships, l: 'Active Deals' }].map((s, i) => (
+                  <div key={i} style={styles.statCard}>
+                    <div style={styles.statValue}>{s.v}</div>
+                    <div style={styles.statLabel}>{s.l}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Search */}
+              <div style={styles.searchCard}>
+                <div style={styles.searchRow}>
+                  <input type="text" placeholder={`Search ${searchMode}s...`} value={searchTerm}
+                    onChange={(e) => { setSearchTerm(e.target.value); setSelectedItem(null); setSelectedSeason(null); }}
+                    style={styles.searchInput}
+                    onFocus={(e) => { e.target.style.borderColor = '#f97316'; e.target.style.boxShadow = '0 0 0 3px rgba(249,115,22,0.1)'; }}
+                    onBlur={(e) => { e.target.style.borderColor = '#e2e8f0'; e.target.style.boxShadow = 'none'; }} />
+                  {(selectedItem || searchTerm || selectedSeason) && <button style={styles.clearBtn} onClick={handleReset}>Clear</button>}
+                </div>
+                <div style={styles.modeRow}>
+                  {['agent', 'player'].map(m => (
+                    <button key={m} style={styles.modeBtn(searchMode === m)} onClick={() => { setSearchMode(m); handleReset(); }}>{m.charAt(0).toUpperCase() + m.slice(1)}s</button>
+                  ))}
+                </div>
+                {!selectedItem && !selectedSeason && searchTerm && suggestions.length > 0 && (
+                  <div style={{ marginTop: 20, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                    {suggestions.map(item => (
+                      <button key={item} style={styles.suggestionPill} onClick={() => handleSelect(item)}
+                        onMouseEnter={(e) => { e.target.style.background = '#f97316'; e.target.style.color = '#fff'; }}
+                        onMouseLeave={(e) => { e.target.style.background = '#f1f5f9'; e.target.style.color = '#334155'; }}>{item}</button>
+                    ))}
+                    {totalMatches > suggestions.length && !showAllSuggestions && (
+                      <button style={{ ...styles.suggestionPill, background: 'transparent', border: '1px dashed #cbd5e1', color: '#94a3b8' }} onClick={() => setShowAllSuggestions(true)}>+{totalMatches - suggestions.length} more</button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* SEASON VIEW */}
+              {selectedSeason && (
+                <>
+                  <div style={styles.heroCard}>
+                    <h2 style={styles.heroTitle} className="hero-title">{selectedSeason} Season</h2>
+                    <p style={styles.heroSub}>{seasonRankings.agents.length} agents • {seasonRankings.players.length} players</p>
+                  </div>
+                  <div style={styles.gridTwo} className="grid-two">
+                    <div>
+                      <div style={styles.sectionTitle}>Top Agents</div>
+                      <div style={styles.card}>
+                        {seasonRankings.agents.map((a, i) => (
+                          <div key={a.agent} style={{ ...styles.listItem, borderBottom: i === seasonRankings.agents.length - 1 ? 'none' : '1px solid #f1f5f9' }}
+                            onClick={() => handleSelect(a.agent, 'agent')}
+                            onMouseEnter={(e) => e.currentTarget.style.background = '#fafafa'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}>
+                            <div style={styles.rankBadge(a.rank)}>{a.rank}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 16, fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.agent}</div>
+                              <div style={{ fontSize: 13, color: '#94a3b8' }}>{a.clients.length} client{a.clients.length !== 1 ? 's' : ''}</div>
+                            </div>
+                            <div style={{ fontSize: 16, fontWeight: 700, color: '#10b981' }}>{formatMoneyShort(a.total)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={styles.sectionTitle}>Top Players</div>
+                      <div style={styles.card}>
+                        {seasonRankings.players.map((p, i) => (
+                          <div key={p.player} style={{ ...styles.listItem, borderBottom: i === seasonRankings.players.length - 1 ? 'none' : '1px solid #f1f5f9' }}
+                            onClick={() => handleSelect(p.player, 'player')}
+                            onMouseEnter={(e) => e.currentTarget.style.background = '#fafafa'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}>
+                            <div style={styles.rankBadge(p.rank)}>{p.rank}</div>
+                            <div style={{ flex: 1, fontSize: 16, fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.player}</div>
+                            <div style={{ fontSize: 16, fontWeight: 700, color: '#10b981' }}>{formatMoney(p.salary)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* HOME VIEW */}
+              {!selectedItem && !searchTerm && !selectedSeason && (
+                <>
+                  <div style={{ ...styles.sectionTitle, justifyContent: 'center', marginBottom: 24 }}>
+                    {showAgentLeaderboard ? 'Top Agents by Client Earnings' : 'Top Players by Career Earnings'}
+                  </div>
+                  <div style={styles.card}>
+                    {(showAgentLeaderboard ? agentLeaderboard.slice(0, 20) : playerLeaderboard.slice(0, 20)).map((item, i) => (
+                      <div key={showAgentLeaderboard ? item.agent : item.player}
+                        style={{ ...styles.listItem, borderBottom: i === 19 ? 'none' : '1px solid #f1f5f9' }}
+                        onClick={() => handleSelect(showAgentLeaderboard ? item.agent : item.player)}
+                        onMouseEnter={(e) => e.currentTarget.style.background = '#fafafa'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}>
+                        <div style={styles.rankBadge(item.rank)}>{item.rank}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 17, fontWeight: 600, color: '#0f172a' }}>{showAgentLeaderboard ? item.agent : item.player}</div>
+                          <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>
+                            {showAgentLeaderboard ? `Since ${item.firstYear} • ${item.currentClients.length} active` : `#${item.rank} all-time`}
+                          </div>
+                        </div>
+                        <div style={styles.earningsBadge}>{formatMoneyShort(showAgentLeaderboard ? item.totalEarnings : item.earnings)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* DETAIL VIEW */}
+              {selectedItem && (
+                <>
+                  <div style={styles.heroCard}>
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <h2 style={styles.heroTitle} className="hero-title">{selectedItem}</h2>
+                      {(selectedAgentRank || selectedPlayerRank) && <span style={styles.heroBadge} className="hero-badge">#{selectedAgentRank || selectedPlayerRank}</span>}
+                    </div>
+                    <p style={styles.heroSub}>
+                      {searchMode === 'agent' 
+                        ? `${currentClients.length} current in the NBA • ${formerClients.length} former • ${formatMoney(totalSelectedEarnings)} total`
+                        : `${formatMoney(totalSelectedEarnings)} career • ${results.length} agent${results.length !== 1 ? 's' : ''}`}
+                    </p>
+                  </div>
+
+                  {searchMode === 'agent' ? (
+                    <>
+                      {currentClients.length > 0 && (
+                        <div style={{ marginBottom: 40 }}>
+                          <div style={styles.sectionTitle}><span style={styles.dot('#10b981')}></span>Current Clients in the NBA ({currentClients.length})</div>
+                          <div style={styles.gridAuto} className="grid-auto">
+                            {currentClients.map((r, i) => (
+                              <div key={i} style={styles.clientCard(true)}>
+                                <div><ClickableName name={r.player} type="player" /></div>
+                                <div style={styles.clientTeam}>{r.team}</div>
+                                <div style={styles.clientEarnings(true)}>{formatMoney(r.earnings)}</div>
+                                <div style={styles.clientMeta}>{r.firstSeason} → {r.lastSeason} • {r.seasonCount} season{r.seasonCount !== 1 ? 's' : ''}</div>
+                                <div>{r.earningSeasons.map((s, j) => <ClickableSeason key={j} season={s.season} salary={s.salary} />)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {formerClients.length > 0 && (
+                        <div style={{ marginBottom: 40 }}>
+                          <div style={styles.sectionTitle}><span style={styles.dot('#94a3b8')}></span>Former Clients in the NBA ({formerClients.length})</div>
+                          <div style={styles.gridAuto} className="grid-auto">
+                            {formerClients.map((r, i) => (
+                              <div key={i} style={styles.clientCard(false)}>
+                                <div><ClickableName name={r.player} type="player" /></div>
+                                <div style={styles.clientEarnings(false)}>{formatMoney(r.earnings)}</div>
+                                <div style={styles.clientMeta}>{r.firstSeason} → {r.lastSeason} • {r.seasonCount} season{r.seasonCount !== 1 ? 's' : ''}</div>
+                                <div>{r.earningSeasons.map((s, j) => <ClickableSeason key={j} season={s.season} salary={s.salary} />)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ marginBottom: 40 }}>
+                      {results.map((r, i) => (
+                        <div key={i} style={{ ...styles.clientCard(r.current), marginBottom: 16 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, marginBottom: 16 }}>
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                <ClickableName name={r.agent} type="agent" />
+                                {r.agentRank && <span style={{ background: '#f1f5f9', color: '#64748b', fontSize: 12, fontWeight: 600, padding: '4px 12px', borderRadius: 16 }}>#{r.agentRank}</span>}
+                                {r.current && <span style={{ background: '#d1fae5', color: '#065f46', fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 16 }}>CURRENT</span>}
+                              </div>
+                              <div style={styles.clientMeta}>{r.firstSeason} → {r.lastSeason} • {r.seasonCount} season{r.seasonCount !== 1 ? 's' : ''}</div>
+                            </div>
+                            <div style={styles.clientEarnings(r.current)}>{formatMoney(r.earnings)}</div>
+                          </div>
+                          <div>{r.earningSeasons.map((s, j) => <ClickableSeason key={j} season={s.season} salary={s.salary} />)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {relatedSuggestions.length > 0 && (
+                    <div style={styles.relatedCard}>
+                      <div style={styles.sectionTitle}>Related {searchMode === 'agent' ? 'Agents' : 'Players'}</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                        {relatedSuggestions.map((item, i) => (
+                          <button key={i} style={styles.relatedBtn} onClick={() => handleSelect(item.name, searchMode)}
+                            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#f97316'; e.currentTarget.style.background = '#fff'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}>
+                            <div style={{ fontSize: 15, fontWeight: 600, color: '#0f172a' }}>{item.name}</div>
+                            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>{item.rank && `#${item.rank} • `}{item.reason}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <footer style={styles.footer}>
+                <div>Earnings from 1990-91 through 2025-26</div>
+                <div style={styles.footerBrand}>HoopsHype</div>
+              </footer>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    // App wrapper that loads data
+    function App() {
+      const [data, setData] = React.useState(null);
+      const [error, setError] = React.useState(null);
+
+      React.useEffect(() => {
+        fetch('data.json')
+          .then(res => {
+            if (!res.ok) throw new Error('Failed to load data');
+            return res.json();
+          })
+          .then(setData)
+          .catch(err => setError(err.message));
+      }, []);
+
+      if (error) return <div className="loading"><span className="loading-text">Error: {error}</span></div>;
+      if (!data) return <div className="loading"><span className="loading-text">Loading agent data...</span></div>;
+
+      return <AgentTracker playerSalaries={data.playerSalaries} agentData={data.agentData} />;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
