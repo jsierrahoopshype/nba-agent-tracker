@@ -78,7 +78,7 @@
       const playersWithTeam = useMemo(() => {
         const set = new Set();
         for (const record of agentData) {
-          if (record.team && record.current === 'Yes') {
+          if (record.team && (record.current === 'Yes' || record.current === true)) {
             set.add(record.player);
           }
         }
@@ -86,7 +86,7 @@
       }, [agentData]);
 
       const seasonToYear = (season) => parseInt(season.split('-')[0]);
-      const isCurrentClient = (record) => record.current === 'Yes';
+      const isCurrentClient = (record) => record.current === 'Yes' || record.current === true;
       
       const parseDate = (dateStr) => {
         if (!dateStr) return null;
@@ -188,6 +188,59 @@
       const agentLeaderboard = useMemo(() => 
         Object.values(agentStats).filter(a => a.totalEarnings > 0).sort((a, b) => b.totalEarnings - a.totalEarnings).map((agent, idx) => ({ ...agent, rank: idx + 1 })), 
       [agentStats]);
+
+      // Recent agent changes (2025-26 season)
+      const recentAgentChanges = useMemo(() => {
+        const changes = [];
+        const playerHistory = {};
+        
+        // Build player history
+        for (const record of agentData) {
+          if (!playerHistory[record.player]) playerHistory[record.player] = [];
+          playerHistory[record.player].push(record);
+        }
+        
+        // Find changes in 2025
+        for (const record of agentData) {
+          const startDate = record.start;
+          if (!startDate) continue;
+          
+          // Check if start date is in 2025 (for 2025-26 season)
+          if (startDate.startsWith('2025')) {
+            const isCurrent = isCurrentClient(record);
+            const playerRecords = playerHistory[record.player] || [];
+            
+            // Find previous agent (most recent non-current or different agent)
+            const previousAgents = playerRecords
+              .filter(r => r.agent !== record.agent && r.start && r.start < startDate)
+              .sort((a, b) => b.start.localeCompare(a.start));
+            
+            const previousAgent = previousAgents.length > 0 ? previousAgents[0].agent : null;
+            
+            changes.push({
+              player: record.player,
+              newAgent: record.agent,
+              previousAgent,
+              team: record.team || null,
+              date: startDate,
+              isCurrent
+            });
+          }
+        }
+        
+        // Sort by date descending, deduplicate by player (keep most recent)
+        changes.sort((a, b) => b.date.localeCompare(a.date));
+        const seen = new Set();
+        const unique = [];
+        for (const c of changes) {
+          if (!seen.has(c.player)) {
+            seen.add(c.player);
+            unique.push(c);
+          }
+        }
+        
+        return unique;
+      }, [agentData]);
       
       const agentRankMap = useMemo(() => {
         const map = {};
@@ -525,6 +578,50 @@
               {/* HOME VIEW */}
               {!selectedItem && !searchTerm && !selectedSeason && (
                 <>
+                  {/* Recent Agent Changes - Main Feature */}
+                  <div style={{ marginBottom: 40 }}>
+                    <div style={{ ...styles.sectionTitle, justifyContent: 'space-between', marginBottom: 24 }}>
+                      <span>2025-26 Agent Changes ({recentAgentChanges.length})</span>
+                    </div>
+                    <div style={styles.gridAuto} className="grid-auto">
+                      {recentAgentChanges.slice(0, 20).map((change, i) => (
+                        <div key={`${change.player}-${i}`} style={{ 
+                          background: '#fff', 
+                          borderRadius: 14, 
+                          padding: 24,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)',
+                          borderLeft: `4px solid ${change.isCurrent ? '#10b981' : '#94a3b8'}`
+                        }}>
+                          <div style={{ marginBottom: 12 }}>
+                            <span onClick={() => handleSelect(change.player, 'player')} style={styles.clientName}
+                              onMouseEnter={(e) => e.target.style.color = '#ea580c'}
+                              onMouseLeave={(e) => e.target.style.color = '#f97316'}>{change.player}</span>
+                          </div>
+                          {change.team && <div style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>{change.team}</div>}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            {change.previousAgent && (
+                              <>
+                                <span onClick={() => handleSelect(change.previousAgent, 'agent')} 
+                                  style={{ fontSize: 14, color: '#94a3b8', cursor: 'pointer', textDecoration: 'line-through' }}
+                                  onMouseEnter={(e) => e.target.style.color = '#64748b'}
+                                  onMouseLeave={(e) => e.target.style.color = '#94a3b8'}>{change.previousAgent}</span>
+                                <span style={{ color: '#cbd5e1' }}>→</span>
+                              </>
+                            )}
+                            <span onClick={() => handleSelect(change.newAgent, 'agent')} 
+                              style={{ fontSize: 14, fontWeight: 600, color: '#10b981', cursor: 'pointer' }}
+                              onMouseEnter={(e) => e.target.style.color = '#059669'}
+                              onMouseLeave={(e) => e.target.style.color = '#10b981'}>{change.newAgent}</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 10 }}>
+                            {new Date(change.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Leaderboard Section */}
                   <div style={{ ...styles.sectionTitle, justifyContent: 'center', marginBottom: 24 }}>
                     {showAgentLeaderboard ? 'Top Agents by Client Earnings' : 'Top Players by Career Earnings'}
                   </div>
