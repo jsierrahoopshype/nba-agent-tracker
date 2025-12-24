@@ -108,10 +108,16 @@
         return true;
       };
 
+      // Deceased agents - last season they should be credited
+      const deceasedAgents = useMemo(() => ({
+        'Dan Fegan': '2017-18'
+      }), []);
+
       const getEarningsWithAgent = (player, agent, agentStart, agentEnd, currentFlag, playerRecords) => {
-        const isCurrent = currentFlag === 'Yes';
+        const isCurrent = currentFlag === 'Yes' || currentFlag === true;
         const isFutureSeason = (season) => futureSeasons.has(season);
         const hasTeam = playersWithTeam.has(player);
+        const agentDeathSeason = deceasedAgents[agent];
         
         let total = 0;
         const seasons = [];
@@ -119,6 +125,8 @@
         
         for (const record of playerRecords) {
           if (isFutureSeason(record.season) && !hasTeam) continue;
+          // Check if agent died before this season
+          if (agentDeathSeason && record.season > agentDeathSeason) continue;
           if (isAgentActiveInSeason(record.season, agentStart, agentEnd, isCurrent)) {
             total += record.salary;
             seasons.push({ season: record.season, salary: record.salary });
@@ -189,47 +197,51 @@
         Object.values(agentStats).filter(a => a.totalEarnings > 0).sort((a, b) => b.totalEarnings - a.totalEarnings).map((agent, idx) => ({ ...agent, rank: idx + 1 })), 
       [agentStats]);
 
-      // Recent agent changes (2025-26 season)
+      // Recent agent changes - only players with NBA earnings in 2025-26
       const recentAgentChanges = useMemo(() => {
         const changes = [];
-        const playerHistory = {};
         
-        // Build player history
-        for (const record of agentData) {
-          if (!playerHistory[record.player]) playerHistory[record.player] = [];
-          playerHistory[record.player].push(record);
+        // Get players with 2025-26 salary
+        const playersWith2526 = new Set();
+        for (const [player, seasons] of Object.entries(playerSalaries)) {
+          if (seasons['2025-26']) playersWith2526.add(player);
         }
         
-        // Find changes in 2025
+        // Find all agent changes, grouped by season
         for (const record of agentData) {
           const startDate = record.start;
           if (!startDate) continue;
           
-          // Check if start date is in 2025 (for 2025-26 season)
-          if (startDate.startsWith('2025')) {
-            const isCurrent = isCurrentClient(record);
-            const playerRecords = playerHistory[record.player] || [];
-            
-            // Find previous agent (most recent non-current or different agent)
-            const previousAgents = playerRecords
-              .filter(r => r.agent !== record.agent && r.start && r.start < startDate)
-              .sort((a, b) => b.start.localeCompare(a.start));
-            
-            const previousAgent = previousAgents.length > 0 ? previousAgents[0].agent : null;
-            
-            changes.push({
-              player: record.player,
-              newAgent: record.agent,
-              previousAgent,
-              team: record.team || null,
-              date: startDate,
-              isCurrent
-            });
-          }
+          const year = parseInt(startDate.substring(0, 4));
+          if (year < 2020) continue; // Only recent changes
+          
+          // Only include if player has 2025-26 earnings
+          if (!playersWith2526.has(record.player)) continue;
+          
+          const isCurrent = isCurrentClient(record);
+          
+          // Determine season based on start date
+          const month = parseInt(startDate.substring(5, 7));
+          const season = month >= 7 ? `${year}-${String(year + 1).slice(-2)}` : `${year - 1}-${String(year).slice(-2)}`;
+          
+          changes.push({
+            player: record.player,
+            newAgent: record.agent,
+            team: record.team || null,
+            date: startDate,
+            season,
+            isCurrent
+          });
         }
         
-        // Sort by date descending, deduplicate by player (keep most recent)
-        changes.sort((a, b) => b.date.localeCompare(a.date));
+        // Sort by season descending, then by date descending within season
+        changes.sort((a, b) => {
+          const seasonCompare = b.season.localeCompare(a.season);
+          if (seasonCompare !== 0) return seasonCompare;
+          return b.date.localeCompare(a.date);
+        });
+        
+        // Deduplicate by player (keep most recent)
         const seen = new Set();
         const unique = [];
         for (const c of changes) {
@@ -240,7 +252,7 @@
         }
         
         return unique;
-      }, [agentData]);
+      }, [agentData, playerSalaries]);
       
       const agentRankMap = useMemo(() => {
         const map = {};
@@ -282,10 +294,21 @@
         }
         const agentRanked = Object.values(agentSeasonEarnings).sort((a, b) => b.total - a.total).map((a, idx) => ({ ...a, rank: idx + 1 }));
         return { 
-          players: playerSeasonEarnings.slice(0, 25).map((p, i) => ({ ...p, rank: i + 1 })), 
-          agents: agentRanked.slice(0, 25) 
+          players: playerSeasonEarnings.slice(0, 100).map((p, i) => ({ ...p, rank: i + 1 })), 
+          agents: agentRanked.slice(0, 100) 
         };
       }, [selectedSeason, agentData, playerSalaries, playerRecordsMap, playersWithTeam, futureSeasons]);
+
+      // All available seasons for navigation
+      const allSeasons = useMemo(() => {
+        const seasons = new Set();
+        for (const [player, salaries] of Object.entries(playerSalaries)) {
+          for (const season of Object.keys(salaries)) {
+            seasons.add(season);
+          }
+        }
+        return [...seasons].sort((a, b) => b.localeCompare(a));
+      }, [playerSalaries]);
 
       const suggestions = useMemo(() => {
         const list = searchMode === 'agent' ? agents : players;
@@ -537,6 +560,46 @@
                     <h2 style={styles.heroTitle} className="hero-title">{selectedSeason} Season</h2>
                     <p style={styles.heroSub}>{seasonRankings.agents.length} agents • {seasonRankings.players.length} players</p>
                   </div>
+                  
+                  {/* Season Navigation */}
+                  <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#64748b' }}>Jump to:</span>
+                    <select 
+                      value={selectedSeason} 
+                      onChange={(e) => handleSeasonClick(e.target.value)}
+                      style={{ 
+                        padding: '10px 16px', 
+                        fontSize: 14, 
+                        fontWeight: 500,
+                        border: '2px solid #e2e8f0', 
+                        borderRadius: 10, 
+                        background: '#fff',
+                        cursor: 'pointer',
+                        outline: 'none'
+                      }}>
+                      {allSeasons.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    {(() => {
+                      const currentIdx = allSeasons.indexOf(selectedSeason);
+                      const prevSeason = currentIdx < allSeasons.length - 1 ? allSeasons[currentIdx + 1] : null;
+                      const nextSeason = currentIdx > 0 ? allSeasons[currentIdx - 1] : null;
+                      return (
+                        <>
+                          {prevSeason && (
+                            <button onClick={() => handleSeasonClick(prevSeason)} style={{ padding: '10px 16px', fontSize: 14, fontWeight: 500, border: '2px solid #e2e8f0', borderRadius: 10, background: '#fff', cursor: 'pointer' }}
+                              onMouseEnter={(e) => e.target.style.borderColor = '#f97316'}
+                              onMouseLeave={(e) => e.target.style.borderColor = '#e2e8f0'}>← {prevSeason}</button>
+                          )}
+                          {nextSeason && (
+                            <button onClick={() => handleSeasonClick(nextSeason)} style={{ padding: '10px 16px', fontSize: 14, fontWeight: 500, border: '2px solid #e2e8f0', borderRadius: 10, background: '#fff', cursor: 'pointer' }}
+                              onMouseEnter={(e) => e.target.style.borderColor = '#f97316'}
+                              onMouseLeave={(e) => e.target.style.borderColor = '#e2e8f0'}>{nextSeason} →</button>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+
                   <div style={styles.gridTwo} className="grid-two">
                     <div>
                       <div style={styles.sectionTitle}>Top Agents</div>
@@ -580,45 +643,53 @@
                 <>
                   {/* Recent Agent Changes - Main Feature */}
                   <div style={{ marginBottom: 40 }}>
-                    <div style={{ ...styles.sectionTitle, justifyContent: 'space-between', marginBottom: 24 }}>
-                      <span>2025-26 Agent Changes ({recentAgentChanges.length})</span>
+                    <div style={{ ...styles.sectionTitle, marginBottom: 24 }}>
+                      <span>Recent Agent Changes</span>
                     </div>
-                    <div style={styles.gridAuto} className="grid-auto">
-                      {recentAgentChanges.slice(0, 20).map((change, i) => (
-                        <div key={`${change.player}-${i}`} style={{ 
-                          background: '#fff', 
-                          borderRadius: 14, 
-                          padding: 24,
-                          boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)',
-                          borderLeft: `4px solid ${change.isCurrent ? '#10b981' : '#94a3b8'}`
-                        }}>
-                          <div style={{ marginBottom: 12 }}>
-                            <span onClick={() => handleSelect(change.player, 'player')} style={styles.clientName}
-                              onMouseEnter={(e) => e.target.style.color = '#ea580c'}
-                              onMouseLeave={(e) => e.target.style.color = '#f97316'}>{change.player}</span>
+                    {(() => {
+                      // Group changes by season
+                      const bySeason = {};
+                      for (const c of recentAgentChanges) {
+                        if (!bySeason[c.season]) bySeason[c.season] = [];
+                        bySeason[c.season].push(c);
+                      }
+                      const seasons = Object.keys(bySeason).sort((a, b) => b.localeCompare(a));
+                      
+                      return seasons.slice(0, 3).map(season => (
+                        <div key={season} style={{ marginBottom: 32 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: '#64748b', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ cursor: 'pointer' }} onClick={() => handleSeasonClick(season)}
+                              onMouseEnter={(e) => e.target.style.color = '#f97316'}
+                              onMouseLeave={(e) => e.target.style.color = '#64748b'}>{season}</span>
+                            <span style={{ fontSize: 12, color: '#94a3b8' }}>({bySeason[season].length} changes)</span>
                           </div>
-                          {change.team && <div style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>{change.team}</div>}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            {change.previousAgent && (
-                              <>
-                                <span onClick={() => handleSelect(change.previousAgent, 'agent')} 
-                                  style={{ fontSize: 14, color: '#94a3b8', cursor: 'pointer', textDecoration: 'line-through' }}
-                                  onMouseEnter={(e) => e.target.style.color = '#64748b'}
-                                  onMouseLeave={(e) => e.target.style.color = '#94a3b8'}>{change.previousAgent}</span>
-                                <span style={{ color: '#cbd5e1' }}>→</span>
-                              </>
-                            )}
-                            <span onClick={() => handleSelect(change.newAgent, 'agent')} 
-                              style={{ fontSize: 14, fontWeight: 600, color: '#10b981', cursor: 'pointer' }}
-                              onMouseEnter={(e) => e.target.style.color = '#059669'}
-                              onMouseLeave={(e) => e.target.style.color = '#10b981'}>{change.newAgent}</span>
-                          </div>
-                          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 10 }}>
-                            {new Date(change.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          <div style={styles.gridAuto} className="grid-auto">
+                            {bySeason[season].slice(0, 12).map((change, i) => (
+                              <div key={`${change.player}-${i}`} style={{ 
+                                background: '#fff', 
+                                borderRadius: 14, 
+                                padding: 20,
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03)',
+                                borderLeft: `4px solid ${change.isCurrent ? '#10b981' : '#94a3b8'}`
+                              }}>
+                                <div style={{ marginBottom: 8 }}>
+                                  <span onClick={() => handleSelect(change.player, 'player')} style={styles.clientName}
+                                    onMouseEnter={(e) => e.target.style.color = '#ea580c'}
+                                    onMouseLeave={(e) => e.target.style.color = '#f97316'}>{change.player}</span>
+                                </div>
+                                {change.team && <div style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>{change.team}</div>}
+                                <div style={{ fontSize: 14, fontWeight: 600, color: '#10b981' }}>
+                                  <span onClick={() => handleSelect(change.newAgent, 'agent')} 
+                                    style={{ cursor: 'pointer' }}
+                                    onMouseEnter={(e) => e.target.style.color = '#059669'}
+                                    onMouseLeave={(e) => e.target.style.color = '#10b981'}>{change.newAgent}</span>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      ));
+                    })()}
                   </div>
 
                   {/* Leaderboard Section */}
