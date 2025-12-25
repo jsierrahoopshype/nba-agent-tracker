@@ -41,6 +41,7 @@
       const [selectedItem, setSelectedItem] = useState(null);
       const [selectedSeason, setSelectedSeason] = useState(null);
       const [showAllSuggestions, setShowAllSuggestions] = useState(false);
+      const [previousView, setPreviousView] = useState(null); // Track where user came from
 
       const formatMoney = (amt) => '$' + Math.round(amt).toLocaleString();
       const formatMoneyShort = (amt) => {
@@ -310,6 +311,38 @@
         return [...seasons].sort((a, b) => b.localeCompare(a));
       }, [playerSalaries]);
 
+      // 2025-26 rankings for homepage
+      const homeSeasonRankings = useMemo(() => {
+        const targetSeason = '2025-26';
+        const playerSeasonEarnings = [];
+        for (const [player, seasons] of Object.entries(playerSalaries)) {
+          if (!playersWithTeam.has(player)) continue;
+          if (seasons[targetSeason]) playerSeasonEarnings.push({ player, salary: seasons[targetSeason] });
+        }
+        playerSeasonEarnings.sort((a, b) => b.salary - a.salary);
+        
+        const agentSeasonEarnings = {};
+        const processedPairs = new Set();
+        for (const record of agentData) {
+          const pairKey = `${record.agent}|${record.player}`;
+          if (processedPairs.has(pairKey)) continue;
+          processedPairs.add(pairKey);
+          const playerRecords = playerRecordsMap[record.player] || [];
+          const earnings = getEarningsWithAgent(record.player, record.agent, record.start, record.end, record.current, playerRecords);
+          const seasonEarning = earnings.seasons.find(s => s.season === targetSeason);
+          if (seasonEarning) {
+            if (!agentSeasonEarnings[record.agent]) agentSeasonEarnings[record.agent] = { agent: record.agent, total: 0, clients: [] };
+            agentSeasonEarnings[record.agent].total += seasonEarning.salary;
+            agentSeasonEarnings[record.agent].clients.push({ player: record.player, salary: seasonEarning.salary });
+          }
+        }
+        const agentRanked = Object.values(agentSeasonEarnings).sort((a, b) => b.total - a.total).map((a, idx) => ({ ...a, rank: idx + 1 }));
+        return { 
+          players: playerSeasonEarnings.slice(0, 20).map((p, i) => ({ ...p, rank: i + 1 })), 
+          agents: agentRanked.slice(0, 20) 
+        };
+      }, [agentData, playerSalaries, playerRecordsMap, playersWithTeam]);
+
       const suggestions = useMemo(() => {
         const list = searchMode === 'agent' ? agents : players;
         if (!searchTerm) return showAllSuggestions ? list : list.slice(0, 15);
@@ -412,14 +445,30 @@
       const selectedPlayerRank = searchMode === 'player' && selectedItem ? playerRankMap[selectedItem] : null;
 
       const handleSelect = useCallback((item, mode) => {
+        // Save current view before navigating
+        if (selectedSeason) {
+          setPreviousView({ type: 'season', season: selectedSeason });
+        } else if (selectedItem) {
+          setPreviousView({ type: 'detail', item: selectedItem, mode: searchMode });
+        } else {
+          setPreviousView({ type: 'home' });
+        }
         if (mode && mode !== searchMode) setSearchMode(mode);
         setSelectedItem(item);
         setSearchTerm(item);
         setSelectedSeason(null);
         setShowAllSuggestions(false);
-      }, [searchMode]);
+      }, [searchMode, selectedSeason, selectedItem]);
       
       const handleSeasonClick = (season) => {
+        // Save current view before navigating
+        if (selectedItem) {
+          setPreviousView({ type: 'detail', item: selectedItem, mode: searchMode });
+        } else if (selectedSeason) {
+          setPreviousView({ type: 'season', season: selectedSeason });
+        } else {
+          setPreviousView({ type: 'home' });
+        }
         setSelectedSeason(season);
         setSelectedItem(null);
         setSearchTerm('');
@@ -430,6 +479,29 @@
         setSearchTerm('');
         setSelectedSeason(null);
         setShowAllSuggestions(false);
+        setPreviousView(null);
+      };
+
+      const handleBack = () => {
+        if (!previousView) {
+          handleReset();
+          return;
+        }
+        if (previousView.type === 'home') {
+          setSelectedItem(null);
+          setSearchTerm('');
+          setSelectedSeason(null);
+        } else if (previousView.type === 'season') {
+          setSelectedSeason(previousView.season);
+          setSelectedItem(null);
+          setSearchTerm('');
+        } else if (previousView.type === 'detail') {
+          setSelectedItem(previousView.item);
+          setSearchTerm(previousView.item);
+          setSearchMode(previousView.mode);
+          setSelectedSeason(null);
+        }
+        setPreviousView(null);
       };
 
       const showAgentLeaderboard = searchMode === 'agent';
@@ -692,25 +764,25 @@
                     })()}
                   </div>
 
-                  {/* Leaderboard Section */}
-                  <div style={{ ...styles.sectionTitle, justifyContent: 'center', marginBottom: 24 }}>
-                    {showAgentLeaderboard ? 'Top Agents by Client Earnings' : 'Top Players by Career Earnings'}
+                  {/* 2025-26 Agent Rankings */}
+                  <div style={{ ...styles.sectionTitle, marginBottom: 24 }}>
+                    <span style={{ cursor: 'pointer' }} onClick={() => handleSeasonClick('2025-26')}
+                      onMouseEnter={(e) => e.target.style.color = '#f97316'}
+                      onMouseLeave={(e) => e.target.style.color = '#64748b'}>2025-26 Agent Rankings</span>
                   </div>
                   <div style={styles.card}>
-                    {(showAgentLeaderboard ? agentLeaderboard.slice(0, 20) : playerLeaderboard.slice(0, 20)).map((item, i) => (
-                      <div key={showAgentLeaderboard ? item.agent : item.player}
-                        style={{ ...styles.listItem, borderBottom: i === 19 ? 'none' : '1px solid #f1f5f9' }}
-                        onClick={() => handleSelect(showAgentLeaderboard ? item.agent : item.player)}
+                    {homeSeasonRankings.agents.map((item, i) => (
+                      <div key={item.agent}
+                        style={{ ...styles.listItem, borderBottom: i === homeSeasonRankings.agents.length - 1 ? 'none' : '1px solid #f1f5f9' }}
+                        onClick={() => handleSelect(item.agent, 'agent')}
                         onMouseEnter={(e) => e.currentTarget.style.background = '#fafafa'}
                         onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}>
                         <div style={styles.rankBadge(item.rank)}>{item.rank}</div>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 17, fontWeight: 600, color: '#0f172a' }}>{showAgentLeaderboard ? item.agent : item.player}</div>
-                          <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>
-                            {showAgentLeaderboard ? `Since ${item.firstYear} • ${item.currentClients.length} active` : `#${item.rank} all-time`}
-                          </div>
+                          <div style={{ fontSize: 17, fontWeight: 600, color: '#0f172a' }}>{item.agent}</div>
+                          <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>{item.clients.length} client{item.clients.length !== 1 ? 's' : ''}</div>
                         </div>
-                        <div style={styles.earningsBadge}>{formatMoneyShort(showAgentLeaderboard ? item.totalEarnings : item.earnings)}</div>
+                        <div style={styles.earningsBadge}>{formatMoneyShort(item.total)}</div>
                       </div>
                     ))}
                   </div>
@@ -720,6 +792,24 @@
               {/* DETAIL VIEW */}
               {selectedItem && (
                 <>
+                  {/* Back Button */}
+                  <button onClick={handleBack} style={{ 
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '10px 16px', 
+                    fontSize: 14, 
+                    fontWeight: 500,
+                    border: '2px solid #e2e8f0', 
+                    borderRadius: 10, 
+                    background: '#fff',
+                    cursor: 'pointer',
+                    marginBottom: 20,
+                    color: '#64748b'
+                  }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#f97316'; e.currentTarget.style.color = '#f97316'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.color = '#64748b'; }}>
+                    ← Back
+                  </button>
+
                   <div style={styles.heroCard}>
                     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
                       <h2 style={styles.heroTitle} className="hero-title">{selectedItem}</h2>
