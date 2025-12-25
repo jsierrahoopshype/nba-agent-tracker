@@ -436,8 +436,10 @@
         }
       }, [selectedItem, searchMode, agentPlayersMap, playerAgentsMap, playerTeamMap, agentRankMap, playerRankMap, agentLeaderboard, playerLeaderboard, playerCareerEarnings]);
 
-      const currentClients = results.filter(r => r.current);
-      const formerClients = results.filter(r => !r.current);
+      // Current clients = marked as current AND has 2025-26 earnings
+      const currentClients = results.filter(r => r.current && r.earningSeasons.some(s => s.season === '2025-26'));
+      // Former clients = either not current OR current but no 2025-26 earnings
+      const formerClients = results.filter(r => !r.current || (r.current && !r.earningSeasons.some(s => s.season === '2025-26')));
       const totalSelectedEarnings = useMemo(() => 
         searchMode === 'agent' ? results.reduce((sum, r) => sum + r.earnings, 0) : playerCareerEarnings[selectedItem] || 0, 
       [results, selectedItem, searchMode, playerCareerEarnings]);
@@ -764,25 +766,23 @@
                     })()}
                   </div>
 
-                  {/* 2025-26 Agent Rankings */}
+                  {/* All-Time Agent Rankings */}
                   <div style={{ ...styles.sectionTitle, marginBottom: 24 }}>
-                    <span style={{ cursor: 'pointer' }} onClick={() => handleSeasonClick('2025-26')}
-                      onMouseEnter={(e) => e.target.style.color = '#f97316'}
-                      onMouseLeave={(e) => e.target.style.color = '#64748b'}>2025-26 Agent Rankings</span>
+                    <span>Top Agents by Client Earnings (All-Time)</span>
                   </div>
                   <div style={styles.card}>
-                    {homeSeasonRankings.agents.map((item, i) => (
+                    {agentLeaderboard.slice(0, 20).map((item, i) => (
                       <div key={item.agent}
-                        style={{ ...styles.listItem, borderBottom: i === homeSeasonRankings.agents.length - 1 ? 'none' : '1px solid #f1f5f9' }}
+                        style={{ ...styles.listItem, borderBottom: i === 19 ? 'none' : '1px solid #f1f5f9' }}
                         onClick={() => handleSelect(item.agent, 'agent')}
                         onMouseEnter={(e) => e.currentTarget.style.background = '#fafafa'}
                         onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}>
                         <div style={styles.rankBadge(item.rank)}>{item.rank}</div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 17, fontWeight: 600, color: '#0f172a' }}>{item.agent}</div>
-                          <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>{item.clients.length} client{item.clients.length !== 1 ? 's' : ''}</div>
+                          <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>Since {item.firstYear} • {item.currentClients.length} active</div>
                         </div>
-                        <div style={styles.earningsBadge}>{formatMoneyShort(item.total)}</div>
+                        <div style={styles.earningsBadge}>{formatMoneyShort(item.totalEarnings)}</div>
                       </div>
                     ))}
                   </div>
@@ -892,6 +892,24 @@
                       </div>
                     </div>
                   )}
+
+                  {/* Back Button - Bottom */}
+                  <button onClick={handleBack} style={{ 
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '10px 16px', 
+                    fontSize: 14, 
+                    fontWeight: 500,
+                    border: '2px solid #e2e8f0', 
+                    borderRadius: 10, 
+                    background: '#fff',
+                    cursor: 'pointer',
+                    marginTop: 24,
+                    color: '#64748b'
+                  }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#f97316'; e.currentTarget.style.color = '#f97316'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.color = '#64748b'; }}>
+                    ← Back
+                  </button>
                 </>
               )}
 
