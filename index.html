@@ -729,7 +729,7 @@
                       }
                       const seasons = Object.keys(bySeason).sort((a, b) => b.localeCompare(a));
                       
-                      return seasons.slice(0, 3).map(season => (
+                      return seasons.slice(0, 2).map(season => (
                         <div key={season} style={{ marginBottom: 32 }}>
                           <div style={{ fontSize: 14, fontWeight: 600, color: '#64748b', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span style={{ cursor: 'pointer' }} onClick={() => handleSeasonClick(season)}
@@ -738,7 +738,7 @@
                             <span style={{ fontSize: 12, color: '#94a3b8' }}>({bySeason[season].length} changes)</span>
                           </div>
                           <div style={styles.gridAuto} className="grid-auto">
-                            {bySeason[season].slice(0, 12).map((change, i) => (
+                            {bySeason[season].slice(0, 30).map((change, i) => (
                               <div key={`${change.player}-${i}`} style={{ 
                                 background: '#fff', 
                                 borderRadius: 14, 
@@ -766,9 +766,9 @@
                     })()}
                   </div>
 
-                  {/* All-Time Agent Rankings */}
+                  {/* Agent Rankings */}
                   <div style={{ ...styles.sectionTitle, marginBottom: 24 }}>
-                    <span>Top Agents by Client Earnings (All-Time)</span>
+                    <span>Top Agents by Client Earnings (Since 2012)</span>
                   </div>
                   <div style={styles.card}>
                     {agentLeaderboard.slice(0, 20).map((item, i) => (
