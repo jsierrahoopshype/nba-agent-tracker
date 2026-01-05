@@ -475,6 +475,8 @@
         setSearchTerm(item);
         setSelectedSeason(null);
         setShowAllSuggestions(false);
+        // Scroll to top
+        window.scrollTo(0, 0);
       }, [searchMode, selectedSeason, selectedItem]);
       
       const handleSeasonClick = (season) => {
@@ -489,6 +491,7 @@
         setSelectedSeason(season);
         setSelectedItem(null);
         setSearchTerm('');
+        window.scrollTo(0, 0);
       };
       
       const handleReset = () => {
@@ -497,6 +500,7 @@
         setSelectedSeason(null);
         setShowAllSuggestions(false);
         setPreviousView(null);
+        window.scrollTo(0, 0);
       };
 
       const handleBack = () => {
@@ -519,6 +523,7 @@
           setSelectedSeason(null);
         }
         setPreviousView(null);
+        window.scrollTo(0, 0);
       };
 
       const showAgentLeaderboard = searchMode === 'agent';
